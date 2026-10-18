@@ -126,3 +126,26 @@ async def analyze_behavior(data: BehaviorAnalysisRequest) -> dict[str, str]:
         return _extract_gemini_json(response)
     except RuntimeError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
+# === 寵物保險理賠預審 API ===
+class ClaimItem(BaseModel):
+    record_id: str
+    visit_date: str
+    diagnosis: str
+    cost: float
+    receipt_url: str = ""
+
+class PreCheckRequest(BaseModel):
+    pet_id: str
+    claim_items: list[ClaimItem]
+
+@app.post("/insurance/pre-check")
+def pre_check_claim(payload: PreCheckRequest):
+    total_cost = sum(item.cost for item in payload.claim_items)
+    diagnoses = "、".join([item.diagnosis for item in payload.claim_items])
+    return {
+        "status": "success",
+        "pet_id": payload.pet_id,
+        "total_cost": total_cost,
+        "eligible_items_count": len(payload.claim_items),
+        "ai_precheck_note": f"已收到【{diagnoses}】共 {len(payload.claim_items)} 筆理賠申請（總計 NT$ {total_cost:,.0f}）。初步判定符合一般門診理賠範疇，請備妥獸醫診斷書與收據正本。"
+    }

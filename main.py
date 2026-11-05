@@ -64,21 +64,23 @@ def _call_gemini(prompt: str) -> dict[str, Any]:
         "https://generativelanguage.googleapis.com/v1beta/models/"
         f"{model}:generateContent"
     )
+    generation_config: dict[str, Any] = {
+        "maxOutputTokens": 2048,
+        "responseMimeType": "application/json",
+        "responseSchema": {
+            "type": "OBJECT",
+            "properties": {
+                "analysis": {"type": "STRING"},
+                "advice": {"type": "STRING"},
+            },
+            "required": ["analysis", "advice"],
+        },
+    }
+    if model.startswith("gemini-3."):
+        generation_config["thinkingConfig"] = {"thinkingLevel": "minimal"}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.2,
-            "maxOutputTokens": 450,
-            "responseMimeType": "application/json",
-            "responseSchema": {
-                "type": "OBJECT",
-                "properties": {
-                    "analysis": {"type": "STRING"},
-                    "advice": {"type": "STRING"},
-                },
-                "required": ["analysis", "advice"],
-            },
-        },
+        "generationConfig": generation_config,
     }
     request = Request(
         url,
@@ -102,16 +104,23 @@ def _call_gemini(prompt: str) -> dict[str, Any]:
 
 def _extract_gemini_json(response: dict[str, Any]) -> dict[str, str]:
     try:
-        text = response["candidates"][0]["content"]["parts"][0]["text"]
+        candidate = response["candidates"][0]
+        parts = candidate.get("content", {}).get("parts", [])
+        text = "".join(part.get("text", "") for part in parts if isinstance(part, dict))
+        if not text.strip():
+            finish_reason = candidate.get("finishReason", "UNKNOWN")
+            if finish_reason == "MAX_TOKENS":
+                raise RuntimeError("Gemini 輸出長度不足，請調高 maxOutputTokens")
+            raise RuntimeError(f"Gemini 沒有提供文字回覆（{finish_reason}）")
         result = json.loads(text)
-        analysis = str(result["analysis"]).strip()
-        advice = str(result["advice"]).strip()
+        analysis = result["analysis"]
+        advice = result["advice"]
     except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as error:
         raise RuntimeError("Gemini 回傳格式不完整") from error
 
-    if not analysis or not advice:
+    if not isinstance(analysis, str) or not isinstance(advice, str) or not analysis.strip() or not advice.strip():
         raise RuntimeError("Gemini 沒有回傳完整分析")
-    return {"analysis": analysis, "advice": advice}
+    return {"analysis": analysis.strip(), "advice": advice.strip()}
 
 
 @app.post("/analyze-behavior")
